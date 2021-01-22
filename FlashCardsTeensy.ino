@@ -20,19 +20,26 @@
 #define FC_FILE_NAME "/fcards.txt"
 #define MAX_LINE_LEN 255
 char fcBuffer[MAX_LINE_LEN + 1]; // room for \0
-const int  FC_DELAY = 5 * 1000;
+const int  FC_DELAY = 2 * 1000;
 
 struct FlashCard {
   String Tagalog;
   String English;
 };
 
+bool TagalogFirst = true;
+
 FlashCard currentCard;
 
 // LCD constants
-const int colorR = 0;
+const int colorR = 255;
 const int colorG = 0;
-const int colorB = 255;
+const int colorB = 0;
+const int colorR_Answer = 0;
+const int colorG_Answer = 255;
+const int colorB_Answer = 0;
+
+
 const int SCREEN_ROWS = 2;
 const int SCREEN_COLS = 16;
 const String TRUNC_CHARS = "...";
@@ -44,14 +51,20 @@ File fcFile;
 const bool is_debug = false;
 
 // Lines are 1 based
-void printScreen(const char* line, bool cls = true, int whichLine = 1) {
+void printScreen(const char* line, bool cls = true, int whichLine = 1, bool isAnswer = false) {
   // Clear screen
   if(cls) {
     lcd.clear();
   }
 
- lcd.setCursor(0,whichLine - 1  );
- lcd.print(line);
+  if(isAnswer) {
+    lcd.setRGB(colorR_Answer, colorG_Answer, colorB_Answer);
+  } else {
+    lcd.setRGB(colorR, colorG, colorB);
+  }
+  
+  lcd.setCursor(0,whichLine - 1  );
+  lcd.print(line);
 }
 
 void debugOut(String value, bool addLF = true) {
@@ -71,7 +84,7 @@ void setupLCD() {
   lcd.setRGB(colorR, colorG, colorB);
   
   // Print a message to the LCD.
-  displayString("FlashCards by Tom Dison");
+  displayString("FlashCards by Tom Dison", true);
 }
 
 bool setupSDCard() {
@@ -129,11 +142,9 @@ bool isLineTerminator(char c) {
 
 String readLine() {
   int charsRead = 0;
-  if(!fcFile.available()) {
-    fcFile.seek(0);
-  }
+
   while(!isLineTerminator(fcFile.peek())
-  && charsRead <= MAX_LINE_LEN) {
+  && charsRead <= MAX_LINE_LEN && fcFile.available()) {
      fcBuffer[charsRead] = fcFile.read();
      charsRead++; // Yes could be done in one line
   }
@@ -141,10 +152,11 @@ String readLine() {
   fcBuffer[charsRead] = '\0';
 
   // Now remove line terminator(s)
-  while(isLineTerminator(fcFile.peek())) {
+  while(fcFile.available() && isLineTerminator(fcFile.peek())) {
     fcFile.read(); // discard
     debugOut("Discarded terminator");
   }
+
   
   return String(fcBuffer);
 }
@@ -153,8 +165,15 @@ void readNextCard() {
   currentCard.Tagalog = "";
   currentCard.English = "";
 
-  currentCard.Tagalog = readLine();;
+ if(!fcFile.available()) {
+    fcFile.seek(0);
+  }
+
+  currentCard.Tagalog = readLine();
   currentCard.English = readLine();
+
+  debugOut(currentCard.Tagalog);
+  debugOut(currentCard.English);
 }
 
 int getNextChunkPos(int startPos, String value, int max_chars,
@@ -184,7 +203,7 @@ int getNextChunkPos(int startPos, String value, int max_chars,
   return lastPos;
 }
 
-void displayString(String value) {
+void displayString(String value, bool isAnswer) {
   int startPos = 0;
   int curLine = 1;
   int lastPos = 0;
@@ -205,7 +224,7 @@ void displayString(String value) {
         line = value.substring(startPos, lastPos);
       }
 
-      printScreen(line.c_str(), curLine == 1, curLine);
+      printScreen(line.c_str(), curLine == 1, curLine, isAnswer);
   
       if(moreChunks) {
         startPos = lastPos;
@@ -225,6 +244,20 @@ void displayString(String value) {
   }
 }
 
+bool reOpenCardFile() {
+  fcFile.close();
+  
+  fcFile = SD.open(FC_FILE_NAME, FILE_READ);
+
+  if(!fcFile) {
+    printScreen("Could not open flash card file!");
+    debugOut("Failed to access SD card!");
+    while(1);
+  }
+
+  fcFile.seek(0);  
+}
+
 bool displayCard() {
   if(currentCard.Tagalog.length() == 0 ||
       currentCard.English.length() == 0) 
@@ -233,16 +266,13 @@ bool displayCard() {
     return false;
   }
 
-  debugOut("Tagalog: ", false);
-  debugOut(currentCard.Tagalog, false);
-  debugOut(", English: ", false);
-  debugOut(currentCard.English);
-
-  debugOut("Display Tagalog");
-  displayString(currentCard.Tagalog.c_str());
-
-  debugOut("Display English");
-  displayString(currentCard.English.c_str());;
+  if(TagalogFirst) {
+    displayString(currentCard.Tagalog.c_str(), false);
+    displayString(currentCard.English.c_str(), true);
+  } else {
+    displayString(currentCard.English.c_str(), false);
+    displayString(currentCard.Tagalog.c_str(), true);
+  }
 
   return true;
 }
@@ -254,6 +284,13 @@ bool showNextCard() {
   bool result = displayCard();
   debugOut("Result of display card is: ", false);
   debugOut(result); 
+
+  if(false == result) {
+    debugOut("...Reopending card file", true);
+    reOpenCardFile();
+    result =  displayCard();
+  }
+  
   return result;
 }
 
